@@ -1,0 +1,15 @@
+{
+	"folders": [
+		{
+			"name": "flutter_baab_sport_field_app",
+			"path": "."
+		},
+		{
+			"name": "backend",
+			"path": "../../Users/altan/backend"
+		}
+	],
+	"settings": {
+		"java.configuration.updateBuildConfiguration": "interactive"
+	}
+}
