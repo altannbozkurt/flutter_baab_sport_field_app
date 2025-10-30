@@ -106,11 +106,13 @@ final goRouterProvider = Provider<GoRouter>((ref) {
                     builder: (BuildContext context, GoRouterState state) {
                       // URL'den matchId parametresini al
                       final matchId = state.pathParameters['matchId'];
+                      final tab = state.uri.queryParameters['tab'];
                       // Eğer ID yoksa hata ekranı göster (veya ana sayfaya yönlendir)
                       if (matchId == null)
                         return const Text('Maç ID bulunamadı!');
                       return MatchDetailScreen(
                         matchId: matchId,
+                        initialTabName: tab,
                       ); // Ekrana ID'yi gönder
                     },
                   ),

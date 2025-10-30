@@ -6,7 +6,7 @@ import 'package:hooks_riverpod/hooks_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:flutter_baab_sport_field_app/features/fields/providers/fields_notifier_provider.dart';
 import 'package:flutter_baab_sport_field_app/features/matches/providers/matches_notifier_provider.dart';
-import 'package:flutter_baab_sport_field_app/features/matches/providers/create_match_form_provider.dart'; // <-- YENİ FORM PROVIDER
+import 'package:flutter_baab_sport_field_app/features/matches/providers/create_match_form_provider.dart';
 
 // Sabit listeler
 const List<String> matchFormats = [
@@ -19,38 +19,51 @@ const List<String> matchFormats = [
   '11v11',
 ];
 const List<int> matchDurations = [60, 90, 120];
-const List<String> privacyOptions = ['public', 'private'];
-const List<String> joinOptions = ['open', 'approval_required'];
+
+// Yeni UI için enum'lar (daha okunaklı)
+enum JoinType { open, approval }
+
+enum PrivacyType { public, private }
 
 class CreateMatchScreen extends HookConsumerWidget {
   const CreateMatchScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    // 1. Form anahtarı ve Controller'lar (Hook ile)
+    // 1. Hook'lar
     final formKey = useMemoized(() => GlobalKey<FormState>());
     final notesController = useTextEditingController();
-    final dateController = useTextEditingController();
-    final timeController = useTextEditingController();
-    final shouldAutovalidate = useState<bool>(false);
+    final currentStep = useState(0); // Stepper için
+    final shouldAutovalidate = useState(false); // Hata gösterimi için
 
-    useEffect(() {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        formKey.currentState
-            ?.reset(); // tüm validator/error görünümlerini sıfırlar
-      });
-      return null;
-    }, const []);
-
-    // 2. Form state'ini ve notifier'ını Riverpod'dan al
+    // 2. Provider'lar
     final formState = ref.watch(createMatchFormProvider);
     final formNotifier = ref.read(createMatchFormProvider.notifier);
-
-    // 3. Diğer state'leri dinle
     final fieldsState = ref.watch(fieldsNotifierProvider);
     final matchesNotifierState = ref.watch(matchesNotifierProvider);
 
-    // 4. Başarı/Hata SnackBar'ları ve Yönlendirme + Form Sıfırlama
+    // 3. GÜNCELLENMİŞ useEffect: UI state'i (currentStep) ile data state'i (formState) senkronize et
+    useEffect(() {
+      // Bu hook, 'formState' her değiştiğinde çalışır.
+
+      // a) Notları senkronize et
+      if (notesController.text != formState.notes) {
+        notesController.text = formState.notes;
+      }
+
+      // b) Formun sıfırlandığını (reset) algıla ve UI'ı da sıfırla.
+      // 'selectedFieldId'nin 'null' olması, formun başında olduğumuz anlamına gelir.
+      if (formState.selectedFieldId == null && currentStep.value != 0) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          currentStep.value = 0;
+          shouldAutovalidate.value = false;
+          formKey.currentState?.reset();
+        });
+      }
+      return null;
+    }, [formState]); // Bağımlılık dizisine 'formState' eklendi.
+
+    // 4. GÜNCELLENMİŞ ref.listen: Başarı durumunda SADECE datayı sıfırla
     ref.listen<MatchesState>(matchesNotifierProvider, (previous, next) {
       // Başarılı oluşturma
       if (previous?.isCreating == true &&
@@ -59,14 +72,17 @@ class CreateMatchScreen extends HookConsumerWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Maç başarıyla oluşturuldu!'),
+              content: Text('Match created successfully!'),
               backgroundColor: Colors.green,
             ),
           );
-          // BAŞARILI OLDUĞUNDA FORMU SIFIRLA!
+
+          // SADECE data provider'ı sıfırla.
+          // 'useEffect' bloğu, bu değişikliği algılayıp UI'ı (currentStep)
+          // otomatik olarak sıfırlayacaktır.
           formNotifier.resetForm();
-          notesController.clear(); // Controller'ı da temizle
-          shouldAutovalidate.value = false; // uyarıları kapat
+          notesController.clear();
+
           context.go('/'); // Ana sayfaya dön
         }
       }
@@ -75,7 +91,7 @@ class CreateMatchScreen extends HookConsumerWidget {
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text("Hata: ${next.errorMessage!}"),
+              content: Text("Error: ${next.errorMessage!}"),
               backgroundColor: Theme.of(context).colorScheme.error,
             ),
           );
@@ -83,7 +99,7 @@ class CreateMatchScreen extends HookConsumerWidget {
       }
     });
 
-    // 5. Tarih seçici (formNotifier'ı kullanacak)
+    // 5. Tarih/Saat Seçiciler
     Future<void> _selectDate(BuildContext context) async {
       final DateTime? picked = await showDatePicker(
         context: context,
@@ -96,7 +112,6 @@ class CreateMatchScreen extends HookConsumerWidget {
       }
     }
 
-    // 6. Saat seçici (formNotifier'ı kullanacak)
     Future<void> _selectTime(BuildContext context) async {
       final TimeOfDay? picked = await showTimePicker(
         context: context,
@@ -107,14 +122,12 @@ class CreateMatchScreen extends HookConsumerWidget {
       }
     }
 
-    // 7. Formu gönderme (formState'i kullanacak)
+    // 6. Form Gönderme
     void submitCreateMatch() async {
-      // Yükleniyorsa veya form geçersizse bir şey yapma
       if (matchesNotifierState.isCreating ||
           !(formKey.currentState?.validate() ?? false)) {
-        // Form geçerli değilse uyarıları görünür yap
         shouldAutovalidate.value = true;
-        formKey.currentState?.validate(); // Tüm validator'ları tetikle
+        formKey.currentState?.validate();
         return;
       }
 
@@ -122,8 +135,12 @@ class CreateMatchScreen extends HookConsumerWidget {
       final date = formState.selectedDate;
       final time = formState.selectedTime;
 
-      // Validator'lar null olmasını engeller, bu kontrol gereksiz olabilir ama kalsın.
-      if (fieldId == null || date == null || time == null) return;
+      if (fieldId == null || date == null || time == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please fill out all required fields.')),
+        );
+        return;
+      }
 
       final DateTime combinedDateTime = DateTime(
         date.year,
@@ -132,10 +149,8 @@ class CreateMatchScreen extends HookConsumerWidget {
         time.hour,
         time.minute,
       );
-      // Sunucu tarafında tutarlılık için UTC gönder
       final String startTimeIso = combinedDateTime.toUtc().toIso8601String();
 
-      // Notifier'ı çağır
       await ref
           .read(matchesNotifierProvider.notifier)
           .createMatch(
@@ -149,291 +164,362 @@ class CreateMatchScreen extends HookConsumerWidget {
                 ? null
                 : notesController.text.trim(),
           );
-      // Başarı/Hata yönetimi ve yönlendirme artık ref.listen içinde
     }
 
-    // Controller'ları formState ile senkronize tut (inherited erişimleri post-frame'de yap)
-    useEffect(() {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        // Notes
-        if (notesController.text != formState.notes) {
-          notesController.text = formState.notes;
-        }
-        // Date (inherited gerektirmez ama tutarlılık için aynı blokta)
-        final dateText = formState.selectedDate == null
-            ? ''
-            : DateFormat('yyyy-MM-dd').format(formState.selectedDate!);
-        if (dateController.text != dateText) {
-          dateController.text = dateText;
-        }
-        // Time (MaterialLocalizations.of(context) => inherited, bu yüzden post-frame)
-        final timeText = formState.selectedTime == null
-            ? ''
-            : MaterialLocalizations.of(
-                context,
-              ).formatTimeOfDay(formState.selectedTime!);
-        if (timeController.text != timeText) {
-          timeController.text = timeText;
-        }
-      });
-      return null;
-    }, [formState.notes, formState.selectedDate, formState.selectedTime]);
+    // --- Adım 1 İçeriği ---
+    Widget _buildStep1Content() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (fieldsState.isLoading)
+            const Center(child: CircularProgressIndicator())
+          else if (fieldsState.errorMessage != null)
+            Text(
+              'Could not load fields: ${fieldsState.errorMessage}',
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
+            )
+          else
+            DropdownButtonFormField<String>(
+              key: ValueKey('field_${formState.selectedFieldId ?? 'null'}'),
+              value: formState.selectedFieldId,
+              hint: const Text('Select a Field *'),
+              decoration: const InputDecoration(
+                labelText: 'Field',
+                border: OutlineInputBorder(),
+                prefixIcon: Icon(Icons.place_outlined),
+              ),
+              items: fieldsState.fields
+                  .map((field) {
+                    final fieldIdFromServer = field['id'];
+                    if (fieldIdFromServer == null) return null;
+                    return DropdownMenuItem<String>(
+                      value: fieldIdFromServer.toString(),
+                      child: Text(field['name'] ?? 'Unnamed Field'),
+                    );
+                  })
+                  .whereType<DropdownMenuItem<String>>()
+                  .toList(),
+              onChanged: matchesNotifierState.isCreating
+                  ? null
+                  : (String? newValue) {
+                      formNotifier.updateFieldId(newValue);
+                    },
+              validator: (value) =>
+                  value == null ? 'Please select a field' : null,
+              autovalidateMode: shouldAutovalidate.value
+                  ? AutovalidateMode.onUserInteraction
+                  : AutovalidateMode.disabled,
+            ),
+          const SizedBox(height: 24),
+          Row(
+            children: [
+              Expanded(
+                child: TextFormField(
+                  readOnly: true,
+                  // Controller'ı bu şekilde ayarlamak, form sıfırlandığında
+                  // text'in de sıfırlanmasını sağlar.
+                  controller: TextEditingController(
+                    text: formState.selectedDate == null
+                        ? ''
+                        : DateFormat(
+                            'EEE, MMM d, yyyy',
+                          ).format(formState.selectedDate!),
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Date *',
+                    hintText: 'Select Date',
+                    border: OutlineInputBorder(),
+                    suffixIcon: Icon(Icons.calendar_today),
+                  ),
+                  onTap: matchesNotifierState.isCreating
+                      ? null
+                      : () => _selectDate(context),
+                  validator: (_) =>
+                      formState.selectedDate == null ? 'Required' : null,
+                  autovalidateMode: shouldAutovalidate.value
+                      ? AutovalidateMode.onUserInteraction
+                      : AutovalidateMode.disabled,
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: TextFormField(
+                  readOnly: true,
+                  controller: TextEditingController(
+                    text: formState.selectedTime == null
+                        ? ''
+                        : MaterialLocalizations.of(
+                            context,
+                          ).formatTimeOfDay(formState.selectedTime!),
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'Time *',
+                    hintText: 'Select Time',
+                    border: OutlineInputBorder(),
+                    suffixIcon: Icon(Icons.access_time),
+                  ),
+                  onTap: matchesNotifierState.isCreating
+                      ? null
+                      : () => _selectTime(context),
+                  validator: (_) =>
+                      formState.selectedTime == null ? 'Required' : null,
+                  autovalidateMode: shouldAutovalidate.value
+                      ? AutovalidateMode.onUserInteraction
+                      : AutovalidateMode.disabled,
+                ),
+              ),
+            ],
+          ),
+        ],
+      );
+    }
 
-    // 8. Arayüz (UI)
+    // --- Adım 2 İçeriği ---
+    Widget _buildStep2Content() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Match Format *',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 8.0,
+            runSpacing: 8.0,
+            children: matchFormats.map((format) {
+              return ChoiceChip(
+                label: Text(format),
+                selected: formState.selectedFormat == format,
+                onSelected: matchesNotifierState.isCreating
+                    ? null
+                    : (bool selected) {
+                        if (selected) {
+                          formNotifier.updateFormat(format);
+                        }
+                      },
+              );
+            }).toList(),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Duration (minutes) *',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          SegmentedButton<int>(
+            segments: matchDurations.map((duration) {
+              return ButtonSegment<int>(
+                value: duration,
+                label: Text('$duration min'),
+              );
+            }).toList(),
+            selected: {formState.selectedDuration},
+            onSelectionChanged: (Set<int> newSelection) {
+              if (!matchesNotifierState.isCreating) {
+                formNotifier.updateDuration(newSelection.first);
+              }
+            },
+            showSelectedIcon: false,
+          ),
+        ],
+      );
+    }
+
+    // --- Adım 3 İçeriği ---
+    Widget _buildStep3Content() {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Join Type *', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 8),
+          SegmentedButton<JoinType>(
+            segments: const [
+              ButtonSegment<JoinType>(
+                value: JoinType.open,
+                label: Text('Open Join'),
+                icon: Icon(Icons.lock_open_outlined),
+              ),
+              ButtonSegment<JoinType>(
+                value: JoinType.approval,
+                label: Text('Approval'),
+                icon: Icon(Icons.lock_outline),
+              ),
+            ],
+            selected: {
+              formState.selectedJoinType == 'open'
+                  ? JoinType.open
+                  : JoinType.approval,
+            },
+            onSelectionChanged: (Set<JoinType> newSelection) {
+              if (!matchesNotifierState.isCreating) {
+                formNotifier.updateJoinType(
+                  newSelection.first == JoinType.open
+                      ? 'open'
+                      : 'approval_required',
+                );
+              }
+            },
+          ),
+          const SizedBox(height: 24),
+          Text('Privacy *', style: Theme.of(context).textTheme.titleMedium),
+          ...PrivacyType.values.map((option) {
+            return RadioListTile<PrivacyType>(
+              title: Text(option == PrivacyType.public ? 'Public' : 'Private'),
+              subtitle: Text(
+                option == PrivacyType.public
+                    ? 'Visible to everyone nearby'
+                    : 'Only visible to invited players',
+              ),
+              value: option,
+              groupValue: formState.selectedPrivacy == 'public'
+                  ? PrivacyType.public
+                  : PrivacyType.private,
+              onChanged: matchesNotifierState.isCreating
+                  ? null
+                  : (PrivacyType? value) {
+                      if (value != null) {
+                        formNotifier.updatePrivacy(
+                          value == PrivacyType.public ? 'public' : 'private',
+                        );
+                      }
+                    },
+            );
+          }).toList(),
+          const SizedBox(height: 24),
+          TextFormField(
+            key: ValueKey('notes_${formState.notes}'),
+            controller: notesController,
+            decoration: const InputDecoration(
+              labelText: 'Match Notes (Optional)',
+              border: OutlineInputBorder(),
+              hintText: 'e.g., Bring a white and dark shirt.',
+            ),
+            maxLines: 3,
+            enabled: !matchesNotifierState.isCreating,
+            onChanged: (value) => formNotifier.updateNotes(value),
+          ),
+        ],
+      );
+    }
+
+    // --- Stepper Adımları ---
+    final steps = [
+      Step(
+        title: const Text('Where & When'),
+        content: _buildStep1Content(),
+        isActive: currentStep.value >= 0,
+        state:
+            (shouldAutovalidate.value &&
+                (formState.selectedFieldId == null ||
+                    formState.selectedDate == null ||
+                    formState.selectedTime == null))
+            ? StepState.error
+            : (currentStep.value > 0 ? StepState.complete : StepState.editing),
+      ),
+      Step(
+        title: const Text('Details'),
+        content: _buildStep2Content(),
+        isActive: currentStep.value >= 1,
+        state: currentStep.value > 1 ? StepState.complete : StepState.editing,
+      ),
+      Step(
+        title: const Text('Settings & Notes'),
+        content: _buildStep3Content(),
+        isActive: currentStep.value >= 2,
+        state: currentStep.value > 2 ? StepState.complete : StepState.editing,
+      ),
+    ];
+
+    // 8. Ana Arayüz (UI)
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Yeni Maç Oluştur'),
+        title: const Text('Create New Match'),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
-            tooltip: 'Formu Sıfırla',
+            tooltip: 'Reset Form',
             onPressed: matchesNotifierState.isCreating
                 ? null
                 : () {
                     formNotifier.resetForm();
                     notesController.clear();
-                    // Formu sıfırladıktan sonra validation'ı da sıfırlayalım
-                    formKey.currentState?.reset();
-                    shouldAutovalidate.value = false; // uyarıları kapat
+                    // formKey.currentState?.reset(); // useEffect halledecek
+                    // shouldAutovalidate.value = false; // useEffect halledecek
+                    // currentStep.value = 0; // useEffect halledecek
                   },
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(20.0),
-        child: Form(
-          key: formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // --- Saha Seçimi ---
-              if (fieldsState.isLoading)
-                const Center(child: CircularProgressIndicator())
-              else if (fieldsState.errorMessage != null)
-                Padding(
-                  // Hata mesajı için biraz boşluk
-                  padding: const EdgeInsets.only(bottom: 16.0),
-                  child: Text(
-                    'Sahalar yüklenemedi: ${fieldsState.errorMessage}',
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
+      body: Form(
+        key: formKey,
+        child: Stepper(
+          type: StepperType.vertical,
+          currentStep: currentStep.value,
+          onStepTapped: (step) {
+            if (matchesNotifierState.isCreating) return;
+            if (step < currentStep.value) {
+              currentStep.value = step;
+              return;
+            }
+            if (formKey.currentState?.validate() ?? false) {
+              currentStep.value = step;
+            } else {
+              shouldAutovalidate.value = true;
+              formKey.currentState?.validate();
+            }
+          },
+          onStepContinue: () {
+            if (matchesNotifierState.isCreating) return;
+
+            if (!(formKey.currentState?.validate() ?? false)) {
+              shouldAutovalidate.value = true;
+              formKey.currentState?.validate();
+              return;
+            }
+
+            if (currentStep.value == steps.length - 1) {
+              submitCreateMatch();
+            } else {
+              currentStep.value += 1;
+            }
+          },
+          onStepCancel: () {
+            if (matchesNotifierState.isCreating) return;
+            if (currentStep.value > 0) {
+              currentStep.value -= 1;
+            }
+          },
+          controlsBuilder: (BuildContext context, ControlsDetails details) {
+            final bool isLastStep = currentStep.value == steps.length - 1;
+            return Container(
+              padding: const EdgeInsets.only(top: 24.0),
+              child: Row(
+                children: <Widget>[
+                  if (matchesNotifierState.isCreating && isLastStep)
+                    const Expanded(
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else
+                    ElevatedButton(
+                      onPressed: details.onStepContinue,
+                      child: Text(isLastStep ? 'Create Match' : 'Continue'),
                     ),
-                  ),
-                )
-              else if (fieldsState.fields.isEmpty)
-                const Padding(
-                  // Mesaj için biraz boşluk
-                  padding: EdgeInsets.only(bottom: 16.0),
-                  child: Text(
-                    'Yakınınızda saha bulunamadı. Lütfen önce bir saha ekleyin.',
-                  ),
-                )
-              else
-                DropdownButtonFormField<String>(
-                  key: ValueKey('field_${formState.selectedFieldId ?? 'null'}'),
-                  initialValue: formState.selectedFieldId,
-                  hint: const Text('Saha Seçin *'),
-                  decoration: const InputDecoration(
-                    border: OutlineInputBorder(),
-                  ),
-                  items: fieldsState.fields
-                      .map((field) {
-                        final fieldIdFromServer = field['id'];
-                        if (fieldIdFromServer == null) return null;
-                        return DropdownMenuItem<String>(
-                          value: fieldIdFromServer.toString(),
-                          child: Text(field['name'] ?? 'İsimsiz Saha'),
-                        );
-                      })
-                      .whereType<DropdownMenuItem<String>>()
-                      .toList(),
-                  onChanged: matchesNotifierState.isCreating
-                      ? null
-                      : (String? newValue) {
-                          formNotifier.updateFieldId(newValue);
-                        },
-                  validator: (value) =>
-                      value == null ? 'Lütfen bir saha seçin' : null,
-                  autovalidateMode: AutovalidateMode.onUserInteraction,
-                ),
-              const SizedBox(height: 16),
 
-              // --- Tarih Seçimi ---
-              TextFormField(
-                readOnly: true,
-                controller: dateController,
-                decoration: const InputDecoration(
-                  labelText: 'Tarih *',
-                  hintText: 'Tarih Seçin',
-                  border: OutlineInputBorder(),
-                  suffixIcon: Icon(Icons.calendar_today),
-                ),
-                onTap: matchesNotifierState.isCreating
-                    ? null
-                    : () {
-                        shouldAutovalidate.value = true; // etkileşim başladı
-                        _selectDate(context);
-                      },
-                validator: (_) => formState.selectedDate == null
-                    ? 'Lütfen tarih seçin'
-                    : null,
-                autovalidateMode: shouldAutovalidate.value
-                    ? AutovalidateMode.onUserInteraction
-                    : AutovalidateMode.disabled,
-              ),
-              const SizedBox(height: 16),
+                  const SizedBox(width: 12),
 
-              // --- Saat Seçimi ---
-              TextFormField(
-                readOnly: true,
-                controller: timeController,
-                decoration: const InputDecoration(
-                  labelText: 'Saat *',
-                  hintText: 'Saat Seçin',
-                  border: OutlineInputBorder(),
-                  suffixIcon: Icon(Icons.access_time),
-                ),
-                onTap: matchesNotifierState.isCreating
-                    ? null
-                    : () {
-                        shouldAutovalidate.value = true; // etkileşim başladı
-                        _selectTime(context);
-                      },
-                validator: (_) =>
-                    formState.selectedTime == null ? 'Lütfen saat seçin' : null,
-                autovalidateMode: shouldAutovalidate.value
-                    ? AutovalidateMode.onUserInteraction
-                    : AutovalidateMode.disabled,
-              ),
-              const SizedBox(height: 16),
-
-              // --- Süre Seçimi ---
-              DropdownButtonFormField<int>(
-                key: ValueKey('duration_${formState.selectedDuration}'),
-                initialValue: formState.selectedDuration,
-                decoration: const InputDecoration(
-                  labelText: 'Süre *',
-                  border: OutlineInputBorder(),
-                ),
-                items: matchDurations.map((duration) {
-                  return DropdownMenuItem<int>(
-                    value: duration,
-                    child: Text('$duration dakika'),
-                  );
-                }).toList(),
-                onChanged: matchesNotifierState.isCreating
-                    ? null
-                    : (int? newValue) {
-                        if (newValue != null)
-                          formNotifier.updateDuration(newValue);
-                      },
-              ),
-              const SizedBox(height: 16),
-
-              // --- Format Seçimi ---
-              DropdownButtonFormField<String>(
-                key: ValueKey('format_${formState.selectedFormat}'),
-                initialValue: formState.selectedFormat,
-                decoration: const InputDecoration(
-                  labelText: 'Format *',
-                  border: OutlineInputBorder(),
-                ),
-                items: matchFormats.map((format) {
-                  return DropdownMenuItem<String>(
-                    value: format,
-                    child: Text(format),
-                  );
-                }).toList(),
-                onChanged: matchesNotifierState.isCreating
-                    ? null
-                    : (String? newValue) {
-                        if (newValue != null)
-                          formNotifier.updateFormat(newValue);
-                      },
-              ),
-              const SizedBox(height: 16),
-
-              // --- Gizlilik Seçimi ---
-              DropdownButtonFormField<String>(
-                key: ValueKey('privacy_${formState.selectedPrivacy}'),
-                initialValue: formState.selectedPrivacy,
-                decoration: const InputDecoration(
-                  labelText: 'Gizlilik',
-                  border: OutlineInputBorder(),
-                ),
-                items: privacyOptions.map((option) {
-                  return DropdownMenuItem<String>(
-                    value: option,
-                    child: Text(
-                      option == 'public' ? 'Herkese Açık' : 'Sadece Davetliler',
+                  if (currentStep.value > 0)
+                    TextButton(
+                      onPressed: details.onStepCancel,
+                      child: matchesNotifierState.isCreating
+                          ? const SizedBox.shrink()
+                          : const Text('Back'),
                     ),
-                  );
-                }).toList(),
-                onChanged: matchesNotifierState.isCreating
-                    ? null
-                    : (String? newValue) {
-                        if (newValue != null)
-                          formNotifier.updatePrivacy(newValue);
-                      },
+                ],
               ),
-              const SizedBox(height: 16),
-
-              // --- Katılım Türü Seçimi ---
-              DropdownButtonFormField<String>(
-                key: ValueKey('joinType_${formState.selectedJoinType}'),
-                initialValue: formState.selectedJoinType,
-                decoration: const InputDecoration(
-                  labelText: 'Katılım Türü',
-                  border: OutlineInputBorder(),
-                ),
-                items: joinOptions.map((option) {
-                  return DropdownMenuItem<String>(
-                    value: option,
-                    child: Text(
-                      option == 'open' ? 'Hızlı Katılım' : 'Onay Gerekli',
-                    ),
-                  );
-                }).toList(),
-                onChanged: matchesNotifierState.isCreating
-                    ? null
-                    : (String? newValue) {
-                        if (newValue != null)
-                          formNotifier.updateJoinType(newValue);
-                      },
-              ),
-              const SizedBox(height: 16),
-
-              // --- Maç Notları ---
-              TextFormField(
-                key: ValueKey('notes_${formState.notes}'),
-                controller: notesController,
-                decoration: const InputDecoration(
-                  labelText: 'Maç Notları (Opsiyonel)',
-                  border: OutlineInputBorder(),
-                  hintText: 'Örn: Beyaz ve siyah forma getirin.',
-                ),
-                maxLines: 3,
-                enabled: !matchesNotifierState.isCreating,
-                onChanged: (value) => formNotifier.updateNotes(value),
-              ),
-              const SizedBox(height: 24),
-
-              // --- Maçı Oluştur Butonu ---
-              if (matchesNotifierState.isCreating)
-                const Center(child: CircularProgressIndicator())
-              else
-                ElevatedButton(
-                  onPressed: matchesNotifierState.isCreating
-                      ? null
-                      : submitCreateMatch,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    textStyle: const TextStyle(fontSize: 18),
-                  ),
-                  child: const Text('Maçı Oluştur'),
-                ),
-            ],
-          ),
+            );
+          },
+          steps: steps,
         ),
       ),
     );
