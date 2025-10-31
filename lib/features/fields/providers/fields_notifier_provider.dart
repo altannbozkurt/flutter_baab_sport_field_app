@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/legacy.dart';
 import 'package:geolocator/geolocator.dart'; // Position için
 import 'package:flutter_baab_sport_field_app/core/providers/location_provider.dart'; // Konum için
 import 'package:flutter_baab_sport_field_app/features/fields/repositories/field_repository.dart'; // Repository için
+import 'package:flutter_baab_sport_field_app/models/field.dart';
 import 'package:meta/meta.dart';
 
 // Saha listesinin durumunu tutacak state
@@ -96,3 +97,19 @@ final fieldsNotifierProvider =
       final fieldRepository = ref.watch(fieldRepositoryProvider);
       return FieldsNotifier(fieldRepository, ref);
     });
+
+// Yakındaki sahaları Field model listesi olarak sağlayan FutureProvider
+final nearbyFieldsProvider = FutureProvider.autoDispose<List<Field>>((
+  ref,
+) async {
+  // Konumu al
+  final position = await ref.watch(currentPositionProvider.future);
+  // Repo ile sahaları çek
+  final repo = ref.watch(fieldRepositoryProvider);
+  final raw = await repo.findNearbyFields(
+    latitude: position.latitude,
+    longitude: position.longitude,
+  );
+  // Field modeline çevir
+  return raw.map((m) => Field.fromJson(m)).toList();
+});

@@ -2,6 +2,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_baab_sport_field_app/features/lobby/screens/create_lobby_post_screen.dart';
 import 'package:flutter_baab_sport_field_app/features/profile/screens/edit_profile_screen.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -129,6 +130,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
                 path: '/create-match', // Bu sekmenin ana rotası
                 builder: (BuildContext context, GoRouterState state) =>
                     const CreateMatchScreen(),
+              ),
+              GoRoute(
+                path: '/create-lobby-post', // YENİ LOBİ İLANI ROTASI
+                builder: (context, state) => const CreateLobbyPostScreen(),
               ),
             ],
           ),
